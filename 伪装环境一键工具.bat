@@ -238,19 +238,19 @@ Set-WinUserLanguageList __LANG__ -Force
 Set-WinUILanguageOverride '__CULTURE__'
 try { Set-WinSystemLocale '__CULTURE__' } catch {}
 Set-WinHomeLocation -GeoId __GEO__
-if (-not (Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\MUI\UILanguages\en-US')) { try { Install-Language en-US } catch { try { Add-WindowsCapability -Online -Name 'Language.Basic~~~en-US~~~0.0.1.0' } catch {} } }
-New-Item 'HKLM:\SOFTWARE\Policies\Google\Chrome' -Force | Out-Null
-Set-ItemProperty 'HKLM:\SOFTWARE\Policies\Google\Chrome' -Name 'WebRTCIPHandlingPolicy' -Value 3 -Type DWord
-New-Item 'HKCU:\Software\Policies\Google\Chrome' -Force | Out-Null
-Set-ItemProperty 'HKCU:\Software\Policies\Google\Chrome' -Name 'WebRTCIPHandlingPolicy' -Value 3 -Type DWord
+if (-not (Test-Path 'HKLM:SYSTEMCurrentControlSetControlMUIUILanguagesen-US')) { try { Install-Language en-US } catch { try { Add-WindowsCapability -Online -Name 'Language.Basic~~~en-US~~~0.0.1.0' } catch {} } }
+New-Item 'HKLM:SOFTWAREPoliciesGoogleChrome' -Force | Out-Null
+Set-ItemProperty 'HKLM:SOFTWAREPoliciesGoogleChrome' -Name 'WebRTCIPHandlingPolicy' -Value 3 -Type DWord
+New-Item 'HKCU:SoftwarePoliciesGoogleChrome' -Force | Out-Null
+Set-ItemProperty 'HKCU:SoftwarePoliciesGoogleChrome' -Name 'WebRTCIPHandlingPolicy' -Value 3 -Type DWord
 Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-$root = Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data'
+$root = Join-Path $env:LOCALAPPDATA 'GoogleChromeUser Data'
 Get-ChildItem $root -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'Default' -or $_.Name -like 'Profile*' } | ForEach-Object {
   $f = Join-Path $_.FullName 'Preferences'
   if (Test-Path $f) {
     $raw = [IO.File]::ReadAllText($f, [Text.Encoding]::UTF8)
-    $new = [regex]::Replace($raw, '"selected_languages"\s*:\s*"[^"]*"', '"selected_languages":"__CHROME__"')
-    $new = [regex]::Replace($new, '"accept_languages"\s*:\s*"[^"]*"', '"accept_languages":"__CHROME__"')
+    $new = [regex]::Replace($raw, '"selected_languages"s*:s*"[^"]*"', '"selected_languages":"__CHROME__"')
+    $new = [regex]::Replace($new, '"accept_languages"s*:s*"[^"]*"', '"accept_languages":"__CHROME__"')
     if ($new -ne $raw) { [IO.File]::WriteAllText($f, $new, (New-Object Text.UTF8Encoding($false))) }
   }
 }
@@ -335,3 +335,4 @@ while ($listener.IsListening) {
     } catch {}
     $ctx.Response.Close()
 }
+
