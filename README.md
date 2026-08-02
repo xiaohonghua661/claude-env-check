@@ -1,6 +1,6 @@
-# Windows 环境伪装一键工具（Disguise Tool）
+# Claude 环境检测（Claude Env Check）
 
-> 单文件 bat，双击即用。内置**本地网页控制台**（浏览器操作界面），用于 Windows 环境伪装与检测。
+> 单文件 bat，双击即用。内置**本地网页控制台**，用于 Windows 环境伪装与检测（含 Claude Code 客户端环境检查）。
 
 ## 功能
 
