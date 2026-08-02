@@ -17,7 +17,7 @@ pause >nul
 exit /b 0
 ::PS>
 
-# 伪装环境一键工具 - 网页版 (由bat以GBK提取执行)
+# 伪装环境一键工具 - 网页版 (由bat以UTF-8提取执行 v1.1.0)
 $OK = 'PASS'; $BAD = 'FAIL'; $WARN = 'WARN'
 
 $uiHtml = @'
@@ -55,16 +55,17 @@ button:active{opacity:.8}
 .v-bad{background:#3b1218;color:var(--bad)}
 </style></head><body><div class="wrap">
 <h1>伪装环境一键工具</h1>
-<div class="sub">本地网页控制台 · 目标：美国纽约 + 英文 · 含 Claude Code 客户端伪装检查</div>
+<div class="sub">本地网页控制台 v1.1.0 · 目标：美国纽约 + 英文 · 含 Claude Code 客户端伪装检查</div>
 <div class="cards">
 <button onclick="run('check')">全面检测</button>
 <button class="green" onclick="run('fixen')">修复为英文+纽约</button>
 <button class="orange" onclick="run('fixzh')">切回中文+北京</button>
 <button class="gray" onclick="run('claude')">Claude客户端检查</button>
+<button class="gray" onclick="run('fixcmd')">修复命令行中文</button>
 <button class="gray" onclick="fetch('/api/report',{method:'POST'})">打开铁证报告</button>
 </div>
 <div id="result"><div class="card">点击上方按钮开始。修复/切回需要管理员权限，会弹出 UAC 授权窗口。</div></div>
-<div class="note">· 检测不需要管理员；修复/切回自动请求管理员。<br>· WebRTC 防泄露策略已内置（browserscan 将不再显示国内真实 IP）。<br>· 本页面由本地服务提供，不经过任何外部服务器。</div>
+<div class="note">· 检测不需要管理员；修复/切回自动请求管理员。<br>· 「修复命令行中文」无需管理员，让新开的 cmd/PowerShell 正常输入显示中文（不影响伪装）。<br>· WebRTC 防泄露策略已内置（browserscan 将不再显示国内真实 IP）。<br>· 本页面由本地服务提供，不经过任何外部服务器。</div>
 </div>
 <script>
 async function run(a){
@@ -146,6 +147,12 @@ function Collect-Evidence {
     $ev += [pscustomobject]@{ L='系统'; I='语言列表首位'; E=$first; S=$(if ($first -eq 'en-US') { $OK } else { $BAD }) }
     $mui = Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\MUI\UILanguages\en-US'
     $ev += [pscustomobject]@{ L='系统'; I='en-US语言包'; E=$(if ($mui) { '已安装' } else { '未安装' }); S=$(if ($mui) { $OK } else { $BAD }) }
+    $conRoot = Get-ItemProperty 'HKCU:\Console' -Name CodePage,FaceName -ErrorAction SilentlyContinue
+    $conCmd = Get-ItemProperty 'HKCU:\Console\%SystemRoot%_system32_cmd.exe' -Name CodePage,FaceName -ErrorAction SilentlyContinue
+    $conCp = if ($conCmd -and $conCmd.CodePage) { $conCmd.CodePage } elseif ($conRoot -and $conRoot.CodePage) { $conRoot.CodePage } else { '默认(437)' }
+    $conFn = if ($conCmd -and $conCmd.FaceName) { $conCmd.FaceName } elseif ($conRoot -and $conRoot.FaceName) { $conRoot.FaceName } else { '默认' }
+    $conSt = if ($conCp -eq 65001 -and $conFn -match 'NSimSun|SimSun|YaHei|宋体') { $OK } else { $WARN }
+    $ev += [pscustomobject]@{ L='系统'; I='命令行中文'; E="代码页=$conCp 字体=$conFn"; S=$conSt }
     $root = Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data'
     $confs = @()
     Get-ChildItem $root -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'Default' -or $_.Name -like 'Profile*' } | Sort-Object { if ($_.Name -eq 'Default') { 0 } else { 1 } } | ForEach-Object {
@@ -224,12 +231,34 @@ function Format-EvHtml($ev) {
     return $sb.ToString()
 }
 
+function Fix-ConsoleChinese {
+    $keys = @('HKCU:\Console','HKCU:\Console\%SystemRoot%_system32_cmd.exe','HKCU:\Console\%SystemRoot%_System32_WindowsPowerShell_v1.0_powershell.exe','HKCU:\Console\%SystemRoot%_SysWOW64_WindowsPowerShell_v1.0_powershell.exe','HKCU:\Console\%SystemRoot%_System32_WindowsPowerShell_v1.0_pwsh.exe')
+    $n = 0
+    foreach ($k in $keys) {
+        try {
+            New-Item -Path $k -Force | Out-Null
+            New-ItemProperty -Path $k -Name 'CodePage' -Value 65001 -PropertyType DWord -Force | Out-Null
+            New-ItemProperty -Path $k -Name 'FaceName' -Value 'NSimSun' -PropertyType String -Force | Out-Null
+            New-ItemProperty -Path $k -Name 'FontFamily' -Value 0 -PropertyType DWord -Force | Out-Null
+            New-ItemProperty -Path $k -Name 'FontSize' -Value 1048576 -PropertyType DWord -Force | Out-Null
+            $n++
+        } catch {}
+    }
+    return $n
+}
+
 function Build-FixScript($action, $resultFile) {
     $tz = if ($action -eq 'fixen') { 'Eastern Standard Time' } else { 'China Standard Time' }
     $culture = if ($action -eq 'fixen') { 'en-US' } else { 'zh-CN' }
     $langList = if ($action -eq 'fixen') { 'en-US,zh-CN' } else { 'zh-CN,en-US' }
     $chromeVal = if ($action -eq 'fixen') { 'en-US,en,zh-CN' } else { 'zh-CN,zh,en-US' }
     $geo = if ($action -eq 'fixen') { 244 } else { 45 }
+    $consoleFix = if ($action -eq 'fixen') {
+@'
+$ck = @('HKCU:\Console','HKCU:\Console\%SystemRoot%_system32_cmd.exe','HKCU:\Console\%SystemRoot%_System32_WindowsPowerShell_v1.0_powershell.exe','HKCU:\Console\%SystemRoot%_SysWOW64_WindowsPowerShell_v1.0_powershell.exe','HKCU:\Console\%SystemRoot%_System32_WindowsPowerShell_v1.0_pwsh.exe')
+foreach ($k2 in $ck) { try { New-Item -Path $k2 -Force | Out-Null; New-ItemProperty -Path $k2 -Name 'CodePage' -Value 65001 -Type DWord -Force | Out-Null; New-ItemProperty -Path $k2 -Name 'FaceName' -Value 'NSimSun' -Type String -Force | Out-Null; New-ItemProperty -Path $k2 -Name 'FontFamily' -Value 0 -Type DWord -Force | Out-Null; New-ItemProperty -Path $k2 -Name 'FontSize' -Value 1048576 -Type DWord -Force | Out-Null } catch {} }
+'@
+    } else { '' }
     $body = @'
 $ErrorActionPreference = 'Continue'
 tzutil /s '__TZ__'
@@ -238,13 +267,13 @@ Set-WinUserLanguageList __LANG__ -Force
 Set-WinUILanguageOverride '__CULTURE__'
 try { Set-WinSystemLocale '__CULTURE__' } catch {}
 Set-WinHomeLocation -GeoId __GEO__
-if (-not (Test-Path 'HKLM:SYSTEMCurrentControlSetControlMUIUILanguagesen-US')) { try { Install-Language en-US } catch { try { Add-WindowsCapability -Online -Name 'Language.Basic~~~en-US~~~0.0.1.0' } catch {} } }
-New-Item 'HKLM:SOFTWAREPoliciesGoogleChrome' -Force | Out-Null
-Set-ItemProperty 'HKLM:SOFTWAREPoliciesGoogleChrome' -Name 'WebRTCIPHandlingPolicy' -Value 3 -Type DWord
-New-Item 'HKCU:SoftwarePoliciesGoogleChrome' -Force | Out-Null
-Set-ItemProperty 'HKCU:SoftwarePoliciesGoogleChrome' -Name 'WebRTCIPHandlingPolicy' -Value 3 -Type DWord
+if (-not (Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\MUI\UILanguages\en-US')) { try { Install-Language en-US } catch { try { Add-WindowsCapability -Online -Name 'Language.Basic~~~en-US~~~0.0.1.0' } catch {} } }
+New-Item 'HKLM:\SOFTWARE\Policies\Google\Chrome' -Force | Out-Null
+Set-ItemProperty 'HKLM:\SOFTWARE\Policies\Google\Chrome' -Name 'WebRTCIPHandlingPolicy' -Value 3 -Type DWord
+New-Item 'HKCU:\Software\Policies\Google\Chrome' -Force | Out-Null
+Set-ItemProperty 'HKCU:\Software\Policies\Google\Chrome' -Name 'WebRTCIPHandlingPolicy' -Value 3 -Type DWord
 Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-$root = Join-Path $env:LOCALAPPDATA 'GoogleChromeUser Data'
+$root = Join-Path $env:LOCALAPPDATA 'Google\Chrome\User Data'
 Get-ChildItem $root -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -eq 'Default' -or $_.Name -like 'Profile*' } | ForEach-Object {
   $f = Join-Path $_.FullName 'Preferences'
   if (Test-Path $f) {
@@ -254,9 +283,10 @@ Get-ChildItem $root -Directory -ErrorAction SilentlyContinue | Where-Object { $_
     if ($new -ne $raw) { [IO.File]::WriteAllText($f, $new, (New-Object Text.UTF8Encoding($false))) }
   }
 }
+__CONSOLE__
 'FIX_OK' | Out-File -LiteralPath '__RESULT__' -Encoding utf8
 '@
-    return $body.Replace('__TZ__', $tz).Replace('__CULTURE__', $culture).Replace('__LANG__', $langList).Replace('__GEO__', [string]$geo).Replace('__CHROME__', $chromeVal).Replace('__RESULT__', $resultFile)
+    return $body.Replace('__TZ__', $tz).Replace('__CULTURE__', $culture).Replace('__LANG__', $langList).Replace('__GEO__', [string]$geo).Replace('__CHROME__', $chromeVal).Replace('__RESULT__', $resultFile).Replace('__CONSOLE__', $consoleFix)
 }
 
 function Invoke-Elevated($action) {
@@ -323,6 +353,10 @@ while ($listener.IsListening) {
         elseif ($path -eq '/api/fixen' -or $path -eq '/api/fixzh') {
             $action = if ($path -eq '/api/fixen') { 'fixen' } else { 'fixzh' }
             $html = Invoke-Elevated $action
+        }
+        elseif ($path -eq '/api/fixcmd') {
+            $n = Fix-ConsoleChinese
+            $html = '<div class="verdict v-ok">命令行中文修复完成</div><div class="card">已写入 ' + $n + ' 个控制台配置（代码页 65001 + 中文字体 NSimSun）。<br>请关闭并重开 cmd / PowerShell 窗口生效；已打开的窗口不受影响。</div>'
         }
         elseif ($path -eq '/api/report') {
             $repDir = Join-Path (Split-Path $env:SELF -Parent) '铁证报告'
