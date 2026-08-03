@@ -1,4 +1,4 @@
-﻿@echo off
+@echo off
 setlocal EnableExtensions
 chcp 65001 >nul <nul
 title 伪装环境一键工具
@@ -439,3 +439,4 @@ while ($listener.IsListening) {
     } catch {}
     $ctx.Response.Close()
 }
+
