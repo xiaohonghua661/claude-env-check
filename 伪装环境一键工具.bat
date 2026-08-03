@@ -17,7 +17,7 @@ pause >nul
 exit /b 0
 ::PS>
 
-# 伪装环境一键工具 - 网页版 (由bat以UTF-8提取执行 v1.1.0)
+# 伪装环境一键工具 - 网页版 (由bat以UTF-8提取执行 v1.1.1)
 $OK = 'PASS'; $BAD = 'FAIL'; $WARN = 'WARN'
 
 $uiHtml = @'
@@ -55,7 +55,7 @@ button:active{opacity:.8}
 .v-bad{background:#3b1218;color:var(--bad)}
 </style></head><body><div class="wrap">
 <h1>伪装环境一键工具</h1>
-<div class="sub">本地网页控制台 v1.1.0 · 目标：美国纽约 + 英文 · 含 Claude Code 客户端伪装检查</div>
+<div class="sub">本地网页控制台 v1.1.1 · 目标：美国纽约 + 英文 · 含 Claude Code 客户端伪装检查</div>
 <div class="cards">
 <button onclick="run('check')">全面检测</button>
 <button class="green" onclick="run('fixen')">修复为英文+纽约</button>
@@ -133,7 +133,8 @@ function Collect-Evidence {
     $ev = @()
     $tz = (tzutil /g) -join ''
     $ev += [pscustomobject]@{ L='系统'; I='时区'; E=$tz; S=$(if ($tz -eq 'Eastern Standard Time') { $OK } elseif ($tz -eq 'China Standard Time') { $WARN } else { $BAD }) }
-    $culture = (Get-Culture).Name
+    $intlLoc = (Get-ItemProperty 'HKCU:\Control Panel\International' -Name LocaleName -ErrorAction SilentlyContinue).LocaleName
+    $culture = if ($intlLoc) { $intlLoc } else { (Get-Culture).Name }
     $ev += [pscustomobject]@{ L='系统'; I='区域格式'; E=$culture; S=$(if ($culture -eq 'en-US') { $OK } else { $BAD }) }
     $sysReg = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Nls\Language' -ErrorAction SilentlyContinue).Default
     $sysLive = (Get-WinSystemLocale).Name
@@ -232,7 +233,7 @@ function Format-EvHtml($ev) {
 }
 
 function Fix-ConsoleChinese {
-    $keys = @('HKCU:\Console','HKCU:\Console\%SystemRoot%_system32_cmd.exe','HKCU:\Console\%SystemRoot%_System32_WindowsPowerShell_v1.0_powershell.exe','HKCU:\Console\%SystemRoot%_SysWOW64_WindowsPowerShell_v1.0_powershell.exe','HKCU:\Console\%SystemRoot%_System32_WindowsPowerShell_v1.0_pwsh.exe')
+    $keys = @('HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Console','HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Console\%SystemRoot%_system32_cmd.exe','HKCU:\Console','HKCU:\Console\%SystemRoot%_system32_cmd.exe','HKCU:\Console\%SystemRoot%_System32_WindowsPowerShell_v1.0_powershell.exe','HKCU:\Console\%SystemRoot%_SysWOW64_WindowsPowerShell_v1.0_powershell.exe','HKCU:\Console\%SystemRoot%_System32_WindowsPowerShell_v1.0_pwsh.exe')
     $n = 0
     foreach ($k in $keys) {
         try {
@@ -255,7 +256,7 @@ function Build-FixScript($action, $resultFile) {
     $geo = if ($action -eq 'fixen') { 244 } else { 45 }
     $consoleFix = if ($action -eq 'fixen') {
 @'
-$ck = @('HKCU:\Console','HKCU:\Console\%SystemRoot%_system32_cmd.exe','HKCU:\Console\%SystemRoot%_System32_WindowsPowerShell_v1.0_powershell.exe','HKCU:\Console\%SystemRoot%_SysWOW64_WindowsPowerShell_v1.0_powershell.exe','HKCU:\Console\%SystemRoot%_System32_WindowsPowerShell_v1.0_pwsh.exe')
+$ck = @('HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Console','HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Console\%SystemRoot%_system32_cmd.exe','HKCU:\Console','HKCU:\Console\%SystemRoot%_system32_cmd.exe','HKCU:\Console\%SystemRoot%_System32_WindowsPowerShell_v1.0_powershell.exe','HKCU:\Console\%SystemRoot%_SysWOW64_WindowsPowerShell_v1.0_powershell.exe','HKCU:\Console\%SystemRoot%_System32_WindowsPowerShell_v1.0_pwsh.exe')
 foreach ($k2 in $ck) { try { New-Item -Path $k2 -Force | Out-Null; New-ItemProperty -Path $k2 -Name 'CodePage' -Value 65001 -Type DWord -Force | Out-Null; New-ItemProperty -Path $k2 -Name 'FaceName' -Value 'NSimSun' -Type String -Force | Out-Null; New-ItemProperty -Path $k2 -Name 'FontFamily' -Value 0 -Type DWord -Force | Out-Null; New-ItemProperty -Path $k2 -Name 'FontSize' -Value 1048576 -Type DWord -Force | Out-Null } catch {} }
 '@
     } else { '' }
@@ -263,6 +264,7 @@ foreach ($k2 in $ck) { try { New-Item -Path $k2 -Force | Out-Null; New-ItemPrope
 $ErrorActionPreference = 'Continue'
 tzutil /s '__TZ__'
 Set-Culture '__CULTURE__'
+Set-ItemProperty 'HKCU:\Control Panel\International' -Name 'LocaleName' -Value '__CULTURE__' -Type String -ErrorAction SilentlyContinue
 Set-WinUserLanguageList __LANG__ -Force
 Set-WinUILanguageOverride '__CULTURE__'
 try { Set-WinSystemLocale '__CULTURE__' } catch {}
