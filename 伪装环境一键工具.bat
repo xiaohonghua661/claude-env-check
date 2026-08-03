@@ -55,10 +55,10 @@ button:active{opacity:.8}
 .v-bad{background:#3b1218;color:var(--bad)}
 </style></head><body><div class="wrap">
 <h1>伪装环境一键工具</h1>
-<div class="sub">本地网页控制台 v1.2.0 · 目标：美国纽约 + 英文 · 含 Claude Code 客户端伪装检查</div>
+<div class="sub">本地网页控制台 v1.3.0 · 目标：美国 + 英文（时区跟随出口IP） · 含 Claude Code 客户端伪装检查</div>
 <div class="cards">
 <button onclick="run('check')">全面检测</button>
-<button class="green" onclick="run('fixen')">修复为英文+纽约</button>
+<button class="green" onclick="run('fixen')">修复为英文+美国</button>
 <button class="orange" onclick="run('fixzh')">切回中文+北京</button>
 <button class="gray" onclick="run('claude')">Claude客户端检查</button>
 <button class="gray" onclick="run('fixcmd')">修复命令行中文</button>
@@ -133,7 +133,11 @@ function Get-ExitMultiDB {
 function Collect-Evidence {
     $ev = @()
     $tz = (tzutil /g) -join ''
-    $ev += [pscustomobject]@{ L='系统'; I='时区'; E=$tz; S=$(if ($tz -eq 'Eastern Standard Time') { $OK } elseif ($tz -eq 'China Standard Time') { $WARN } else { $BAD }) }
+    $rows = Get-ExitMultiDB
+    $exitTz = if ($rows.Count -gt 0) { (($rows | Group-Object Tz | Sort-Object Count -Descending | Select-Object -First 1).Name) } else { '' }
+    $sysIana = switch ($tz) { 'Eastern Standard Time' { 'America/New_York' } 'Pacific Standard Time' { 'America/Los_Angeles' } 'Central Standard Time' { 'America/Chicago' } 'Mountain Standard Time' { 'America/Denver' } 'China Standard Time' { 'Asia/Shanghai' } default { '' } }
+    $tzS = if ($exitTz -and $sysIana -eq $exitTz) { $OK } elseif (-not $exitTz -and $tz -match 'Eastern Standard|Pacific Standard|Central Standard|Mountain Standard') { $OK } elseif ($tz -eq 'China Standard Time') { $WARN } else { $BAD }
+    $ev += [pscustomobject]@{ L='系统'; I='时区'; E="$tz (出口=$exitTz)"; S=$tzS }
     $intlLoc = (Get-ItemProperty 'HKCU:\Control Panel\International' -Name LocaleName -ErrorAction SilentlyContinue).LocaleName
     $culture = if ($intlLoc) { $intlLoc } else { (Get-Culture).Name }
     $ev += [pscustomobject]@{ L='系统'; I='区域格式'; E=$culture; S=$(if ($culture -eq 'en-US') { $OK } else { $BAD }) }
@@ -170,7 +174,7 @@ function Collect-Evidence {
         $langS = if ($be['language'] -eq '') { $WARN } elseif ($be['language'] -eq 'en-US') { $OK } else { $BAD }
         $ev += [pscustomobject]@{ L='浏览器'; I='实时语言'; E=$langE; S=$langS }
         $tzE = if ($be['tz'] -eq '') { '未能获取(请普通权限运行)' } else { $be['tz'] }
-        $tzS = if ($be['tz'] -eq '') { $WARN } elseif ($be['tz'] -eq 'America/New_York') { $OK } else { $BAD }
+        $tzS = if ($be['tz'] -eq '') { $WARN } elseif ($exitTz -and $be['tz'] -eq $exitTz) { $OK } elseif (-not $exitTz -and $be['tz'] -match '^America/') { $OK } else { $BAD }
         $ev += [pscustomobject]@{ L='浏览器'; I='实时时区'; E=$tzE; S=$tzS }
     } else { $ev += [pscustomobject]@{ L='浏览器'; I='实时指纹'; E='未找到Chrome'; S=$WARN } }
     $dns = @(Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.ServerAddresses } | ForEach-Object { $_.ServerAddresses }) | Select-Object -Unique
@@ -179,12 +183,10 @@ function Collect-Evidence {
     $wrtcV = (Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Google\Chrome' -Name 'WebRTCIPHandlingPolicy' -ErrorAction SilentlyContinue).WebRTCIPHandlingPolicy
     if (-not $wrtcV) { $wrtcV = (Get-ItemProperty 'HKCU:\Software\Policies\Google\Chrome' -Name 'WebRTCIPHandlingPolicy' -ErrorAction SilentlyContinue).WebRTCIPHandlingPolicy }
     $ev += [pscustomobject]@{ L='网络'; I='WebRTC防泄露'; E=$(if ($wrtcV -eq 3) { '策略已启用(disable_non_proxied_udp)' } else { '未启用(会泄露真实IP)' }); S=$(if ($wrtcV -eq 3) { $OK } else { $BAD }) }
-    $rows = Get-ExitMultiDB
     if ($rows.Count -gt 0) {
         $usCount = @($rows | Where-Object { $_.Country -match 'US|United' }).Count
-        $nyCount = @($rows | Where-Object { $_.Tz -eq 'America/New_York' }).Count
         $ev += [pscustomobject]@{ L='网络'; I='出口IP'; E=(($rows | ForEach-Object { $_.IP }) -join '; '); S=$(if ($usCount -eq $rows.Count) { $OK } else { $BAD }) }
-        $ev += [pscustomobject]@{ L='网络'; I='出口判纽约'; E="$nyCount/$($rows.Count) 库"; S=$(if ($nyCount -eq $rows.Count) { $OK } elseif ($nyCount -gt 0) { $WARN } else { $BAD }) }
+        $ev += [pscustomobject]@{ L='网络'; I='出口判时区一致'; E="$exitTz / 系统=$sysIana"; S=$(if ($exitTz -and $sysIana -eq $exitTz) { $OK } elseif (-not $exitTz) { $WARN } else { $BAD }) }
     } else { $ev += [pscustomobject]@{ L='网络'; I='出口IP'; E='查询失败'; S=$WARN } }
     return $ev
 }
@@ -195,7 +197,7 @@ function Claude-Check {
     $rows += [pscustomobject]@{ I='Claude Code'; E=$(if ($claudeCmd) { '已安装: ' + $claudeCmd.Source } else { '未安装(仅检查环境)' }); S='INFO' }
     $claudeDir = Join-Path $env:USERPROFILE '.claude'
     $rows += [pscustomobject]@{ I='.claude 目录'; E=$(if (Test-Path $claudeDir) { '存在' } else { '不存在' }); S='INFO' }
-    $rows += [pscustomobject]@{ I='终端时区(Claude继承)'; E=((tzutil /g) -join ''); S=$(if (((tzutil /g) -join '') -eq 'Eastern Standard Time') { $OK } else { $WARN }) }
+    $rows += [pscustomobject]@{ I='终端时区(Claude继承)'; E=((tzutil /g) -join ''); S=$(if (((tzutil /g) -join '') -match 'Eastern Standard|Pacific Standard|Central Standard|Mountain Standard') { $OK } else { $WARN }) }
     $rows += [pscustomobject]@{ I='终端区域'; E=(Get-Culture).Name; S=$(if ((Get-Culture).Name -eq 'en-US') { $OK } else { $WARN }) }
     $px = if ($env:HTTPS_PROXY) { $env:HTTPS_PROXY } elseif ($env:https_proxy) { $env:https_proxy } else { '未设置(走系统/路由器)' }
     $rows += [pscustomobject]@{ I='HTTPS代理'; E=$px; S='INFO' }
@@ -223,7 +225,7 @@ function Format-EvHtml($ev) {
     $warns = @($ev | Where-Object { $_.S -eq $WARN }).Count
     if ($fails -eq 0 -and $warns -eq 0) { [void]$sb.Append('<div class="verdict v-ok">铁证判定：全部 PASS，环境伪装成立</div>') }
     elseif ($fails -eq 0) { [void]$sb.Append(('<div class="verdict v-warn">核心 PASS，' + $warns + ' 项留意（多为数据库分歧/待重启）</div>')) }
-    else { [void]$sb.Append(('<div class="verdict v-bad">' + $fails + ' 项 FAIL，铁证不成立，请先点「修复为英文+纽约」</div>')) }
+    else { [void]$sb.Append(('<div class="verdict v-bad">' + $fails + ' 项 FAIL，铁证不成立，请先点「修复为英文+美国」</div>')) }
     [void]$sb.Append('<div class="card">')
     foreach ($e in $ev) {
         $cls = if ($e.S -eq 'PASS') { 'b-ok' } elseif ($e.S -eq 'WARN') { 'b-warn' } elseif ($e.S -eq 'FAIL') { 'b-bad' } else { 'b-info' }
@@ -250,7 +252,11 @@ function Fix-ConsoleChinese {
 }
 
 function Build-FixScript($action, $resultFile) {
-    $tz = if ($action -eq 'fixen') { 'Eastern Standard Time' } else { 'China Standard Time' }
+    $tz = 'China Standard Time'
+    if ($action -eq 'fixen') {
+        $tz = 'Pacific Standard Time'
+        try { $a = Invoke-RestMethod -Uri 'https://ipinfo.io/json' -TimeoutSec 8 -ErrorAction Stop; $tz = switch ($a.timezone) { 'America/New_York' { 'Eastern Standard Time' } 'America/Los_Angeles' { 'Pacific Standard Time' } 'America/Chicago' { 'Central Standard Time' } 'America/Denver' { 'Mountain Standard Time' } default { 'Pacific Standard Time' } } } catch {}
+    }
     $culture = if ($action -eq 'fixen') { 'en-US' } else { 'zh-CN' }
     $wantFirst = if ($action -eq 'fixen') { 'en-US' } else { 'zh-Hans-CN' }
     $chromeVal = if ($action -eq 'fixen') { 'en-US,en,zh-CN' } else { 'zh-CN,zh,en-US' }
@@ -332,7 +338,7 @@ function Toggle-MsPinyin {
     $SG_TIP = '0804:{E7EA138E-69F8-11D7-A6EA-00065B844310}{E7EA138F-69F8-11D7-A6EA-00065B844311}'
     $cur = Get-WinUserLanguageList
     $zh = $cur | Where-Object { $_.LanguageTag -eq 'zh-Hans-CN' }
-    if (-not $zh) { return '<div class="verdict v-warn">未找到 zh-Hans-CN</div><div class="card">请先运行「修复为英文+纽约」。</div>' }
+    if (-not $zh) { return '<div class="verdict v-warn">未找到 zh-Hans-CN</div><div class="card">请先运行「修复为英文+美国」。</div>' }
     $msOn = @($zh.InputMethodTips) -contains $MS_TIP
     $newList = @()
     foreach ($lang in $cur) {
@@ -361,7 +367,7 @@ function Invoke-Elevated($action) {
     $tmp = Join-Path $env:TEMP ('fixact_' + [guid]::NewGuid().ToString('N') + '.ps1')
     $script = Build-FixScript $action $resultFile
     [System.IO.File]::WriteAllText($tmp, $script, (New-Object System.Text.UTF8Encoding($true)))
-    $label = if ($action -eq 'fixen') { '修复为英文+纽约' } else { '切回中文+北京' }
+    $label = if ($action -eq 'fixen') { '修复为英文+美国' } else { '切回中文+北京' }
     try {
         $p = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',$tmp) -Verb RunAs -PassThru -Wait
         Start-Sleep -Seconds 1
@@ -414,7 +420,7 @@ while ($listener.IsListening) {
                 $cls = if ($e.S -eq 'PASS') { 'b-ok' } elseif ($e.S -eq 'WARN') { 'b-warn' } else { 'b-info' }
                 [void]$sb.Append(('<div class="row"><span class="k">' + $e.I + '</span><span class="v">' + $e.E + ' <span class="badge ' + $cls + '">' + $e.S + '</span></span></div>'))
             }
-            [void]$sb.Append('</div><div class="note">提示：Claude 服务端的出口判定请看 https://ip.net.coffee/claude/ （应在纽约/美国）。Claude Code 本地终端继承上述时区/区域/代理设置。</div>')
+            [void]$sb.Append('</div><div class="note">提示：Claude 服务端的出口判定请看 https://ip.net.coffee/claude/ （应在美国，且时区与系统一致）。Claude Code 本地终端继承上述时区/区域/代理设置。</div>')
             $html = $sb.ToString()
         }
         elseif ($path -eq '/api/fixen' -or $path -eq '/api/fixzh') {
@@ -439,4 +445,3 @@ while ($listener.IsListening) {
     } catch {}
     $ctx.Response.Close()
 }
-
