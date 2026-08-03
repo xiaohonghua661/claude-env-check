@@ -17,7 +17,7 @@ pause >nul
 exit /b 0
 ::PS>
 
-# 伪装环境一键工具 - 网页版 (由bat以UTF-8提取执行 v1.1.1)
+# 伪装环境一键工具 - 网页版 (由bat以UTF-8提取执行 v1.2.0)
 $OK = 'PASS'; $BAD = 'FAIL'; $WARN = 'WARN'
 
 $uiHtml = @'
@@ -55,17 +55,18 @@ button:active{opacity:.8}
 .v-bad{background:#3b1218;color:var(--bad)}
 </style></head><body><div class="wrap">
 <h1>伪装环境一键工具</h1>
-<div class="sub">本地网页控制台 v1.1.1 · 目标：美国纽约 + 英文 · 含 Claude Code 客户端伪装检查</div>
+<div class="sub">本地网页控制台 v1.2.0 · 目标：美国纽约 + 英文 · 含 Claude Code 客户端伪装检查</div>
 <div class="cards">
 <button onclick="run('check')">全面检测</button>
 <button class="green" onclick="run('fixen')">修复为英文+纽约</button>
 <button class="orange" onclick="run('fixzh')">切回中文+北京</button>
 <button class="gray" onclick="run('claude')">Claude客户端检查</button>
 <button class="gray" onclick="run('fixcmd')">修复命令行中文</button>
+<button class="gray" onclick="run('mspinyin')">微软拼音开关</button>
 <button class="gray" onclick="fetch('/api/report',{method:'POST'})">打开铁证报告</button>
 </div>
 <div id="result"><div class="card">点击上方按钮开始。修复/切回需要管理员权限，会弹出 UAC 授权窗口。</div></div>
-<div class="note">· 检测不需要管理员；修复/切回自动请求管理员。<br>· 「修复命令行中文」无需管理员，让新开的 cmd/PowerShell 正常输入显示中文（不影响伪装）。<br>· WebRTC 防泄露策略已内置（browserscan 将不再显示国内真实 IP）。<br>· 本页面由本地服务提供，不经过任何外部服务器。</div>
+<div class="note">· 检测不需要管理员；修复/切回自动请求管理员。<br>· 「修复命令行中文」无需管理员，让新开的 cmd/PowerShell 正常输入显示中文（不影响伪装）。<br>· 「微软拼音开关」无需管理员，切换 zh-Hans-CN 中微软拼音的开关（搜狗输入法始终保留）。<br>· WebRTC 防泄露策略已内置（browserscan 将不再显示国内真实 IP）。<br>· 本页面由本地服务提供，不经过任何外部服务器。</div>
 </div>
 <script>
 async function run(a){
@@ -251,7 +252,7 @@ function Fix-ConsoleChinese {
 function Build-FixScript($action, $resultFile) {
     $tz = if ($action -eq 'fixen') { 'Eastern Standard Time' } else { 'China Standard Time' }
     $culture = if ($action -eq 'fixen') { 'en-US' } else { 'zh-CN' }
-    $langList = if ($action -eq 'fixen') { 'en-US,zh-CN' } else { 'zh-CN,en-US' }
+    $wantFirst = if ($action -eq 'fixen') { 'en-US' } else { 'zh-Hans-CN' }
     $chromeVal = if ($action -eq 'fixen') { 'en-US,en,zh-CN' } else { 'zh-CN,zh,en-US' }
     $geo = if ($action -eq 'fixen') { 244 } else { 45 }
     $consoleFix = if ($action -eq 'fixen') {
@@ -265,7 +266,41 @@ $ErrorActionPreference = 'Continue'
 tzutil /s '__TZ__'
 Set-Culture '__CULTURE__'
 Set-ItemProperty 'HKCU:\Control Panel\International' -Name 'LocaleName' -Value '__CULTURE__' -Type String -ErrorAction SilentlyContinue
-Set-WinUserLanguageList __LANG__ -Force
+# keep existing input methods (Sogou stays); only reorder first language + set default input
+$cur = Get-WinUserLanguageList
+$newList = @()
+$firstL = New-WinUserLanguageList '__FIRST__'
+$f0 = $firstL[0]
+$f0.InputMethodTips.Clear()
+if ('__FIRST__' -eq 'en-US') { [void]$f0.InputMethodTips.Add('0409:00000409') }
+else {
+  $curZh = $cur | Where-Object { $_.LanguageTag -eq '__FIRST__' } | Select-Object -First 1
+  if ($curZh) { foreach ($tip in $curZh.InputMethodTips) { [void]$f0.InputMethodTips.Add($tip) } } else { [void]$f0.InputMethodTips.Add('0804:{E7EA138E-69F8-11D7-A6EA-00065B844310}{E7EA138F-69F8-11D7-A6EA-00065B844311}'); [void]$f0.InputMethodTips.Add('0804:{81D4E9C9-1D3B-41BC-9E6C-4B40BF79E35E}{FA550B04-5AD7-411F-A5AC-CA038EC515D7}') }
+  $sg = '0804:{E7EA138E-69F8-11D7-A6EA-00065B844310}{E7EA138F-69F8-11D7-A6EA-00065B844311}'
+  if ($f0.InputMethodTips -notcontains $sg) { [void]$f0.InputMethodTips.Add($sg) }
+}
+$newList += $f0
+foreach ($lang in $cur) {
+  if ($lang.LanguageTag -eq '__FIRST__') { continue }
+  $fresh = New-WinUserLanguageList $lang.LanguageTag
+  $f = $fresh[0]
+  $f.InputMethodTips.Clear()
+  foreach ($tip in $lang.InputMethodTips) { [void]$f.InputMethodTips.Add($tip) }
+  if ($lang.LanguageTag -eq 'zh-Hans-CN') {
+    $sg = '0804:{E7EA138E-69F8-11D7-A6EA-00065B844310}{E7EA138F-69F8-11D7-A6EA-00065B844311}'
+    if ($f.InputMethodTips -notcontains $sg) { [void]$f.InputMethodTips.Add($sg) }
+  }
+  $newList += $f
+}
+if (-not ($newList | Where-Object { $_.LanguageTag -eq 'zh-Hans-CN' })) {
+  $z = New-WinUserLanguageList zh-Hans-CN
+  $z[0].InputMethodTips.Clear()
+  [void]$z[0].InputMethodTips.Add('0804:{E7EA138E-69F8-11D7-A6EA-00065B844310}{E7EA138F-69F8-11D7-A6EA-00065B844311}')
+  [void]$z[0].InputMethodTips.Add('0804:{81D4E9C9-1D3B-41BC-9E6C-4B40BF79E35E}{FA550B04-5AD7-411F-A5AC-CA038EC515D7}')
+  $newList += $z[0]
+}
+Set-WinUserLanguageList $newList -Force
+Set-ItemProperty 'HKCU:\Control Panel\International\User Profile' -Name 'InputMethodOverride' -Value '0409:00000409' -Type String
 Set-WinUILanguageOverride '__CULTURE__'
 try { Set-WinSystemLocale '__CULTURE__' } catch {}
 Set-WinHomeLocation -GeoId __GEO__
@@ -288,7 +323,37 @@ Get-ChildItem $root -Directory -ErrorAction SilentlyContinue | Where-Object { $_
 __CONSOLE__
 'FIX_OK' | Out-File -LiteralPath '__RESULT__' -Encoding utf8
 '@
-    return $body.Replace('__TZ__', $tz).Replace('__CULTURE__', $culture).Replace('__LANG__', $langList).Replace('__GEO__', [string]$geo).Replace('__CHROME__', $chromeVal).Replace('__RESULT__', $resultFile).Replace('__CONSOLE__', $consoleFix)
+    return $body.Replace('__TZ__', $tz).Replace('__CULTURE__', $culture).Replace('__FIRST__', $wantFirst).Replace('__GEO__', [string]$geo).Replace('__CHROME__', $chromeVal).Replace('__RESULT__', $resultFile).Replace('__CONSOLE__', $consoleFix)
+}
+
+function Toggle-MsPinyin {
+    try {
+    $MS_TIP = '0804:{81D4E9C9-1D3B-41BC-9E6C-4B40BF79E35E}{FA550B04-5AD7-411F-A5AC-CA038EC515D7}'
+    $SG_TIP = '0804:{E7EA138E-69F8-11D7-A6EA-00065B844310}{E7EA138F-69F8-11D7-A6EA-00065B844311}'
+    $cur = Get-WinUserLanguageList
+    $zh = $cur | Where-Object { $_.LanguageTag -eq 'zh-Hans-CN' }
+    if (-not $zh) { return '<div class="verdict v-warn">未找到 zh-Hans-CN</div><div class="card">请先运行「修复为英文+纽约」。</div>' }
+    $msOn = @($zh.InputMethodTips) -contains $MS_TIP
+    $newList = @()
+    foreach ($lang in $cur) {
+        $fresh = New-WinUserLanguageList $lang.LanguageTag
+        $f = $fresh[0]
+        $f.InputMethodTips.Clear()
+        foreach ($tip in $lang.InputMethodTips) { if ($tip -eq $MS_TIP) { continue }; [void]$f.InputMethodTips.Add($tip) }
+        if ($lang.LanguageTag -eq 'zh-Hans-CN') {
+            if ($f.InputMethodTips -notcontains $SG_TIP) { [void]$f.InputMethodTips.Add($SG_TIP) }
+            if (-not $msOn) { [void]$f.InputMethodTips.Add($MS_TIP) }
+        }
+        $newList += $f
+    }
+    Set-WinUserLanguageList $newList -Force
+    $state = if ($msOn) { '已关闭' } else { '已开启' }
+    $zhNew = $newList | Where-Object { $_.LanguageTag -eq 'zh-Hans-CN' } | Select-Object -First 1
+    $tips = if ($zhNew) { $zhNew.InputMethodTips -join '; ' } else { '(无)' }
+    return '<div class="verdict v-ok">微软拼音' + $state + '</div><div class="card">zh-Hans-CN 当前输入法: ' + $tips + '<br>搜狗输入法已保留，不受影响。新开的程序生效。</div>'
+    } catch {
+        return '<div class="verdict v-bad">微软拼音开关失败: ' + $_.Exception.Message + '</div>'
+    }
 }
 
 function Invoke-Elevated($action) {
@@ -365,10 +430,12 @@ while ($listener.IsListening) {
             if (Test-Path $repDir) { Start-Process $repDir }
             $html = '<div class="card">已打开铁证报告文件夹</div>'
         }
+        elseif ($path -eq '/api/mspinyin') {
+            $html = Toggle-MsPinyin
+        }
         $bytes = [System.Text.Encoding]::UTF8.GetBytes($html)
         $ctx.Response.ContentType = $ctype
         $ctx.Response.OutputStream.Write($bytes, 0, $bytes.Length)
     } catch {}
     $ctx.Response.Close()
 }
-
